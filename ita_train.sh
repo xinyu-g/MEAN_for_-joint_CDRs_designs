@@ -26,5 +26,5 @@ python ita_train.py \
     --save_dir ${CKPT_DIR}/ita \
     --batch_size 4 \
     --update_freq 4 \
-    --gpu 0 \
+    --gpu -1 \
     --lr ${LR}

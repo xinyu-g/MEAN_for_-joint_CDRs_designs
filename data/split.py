@@ -88,7 +88,9 @@ def main(args):
     if not os.path.exists(tmp_dir):
         os.makedirs(tmp_dir)
     else:
-        raise ValueError(f'Working directory {tmp_dir} exists!')
+        os.system(f"rm -rf {tmp_dir}")
+        os.makedirs(tmp_dir)
+        # raise ValueError(f'Working directory {tmp_dir} exists!')
     fasta = os.path.join(tmp_dir, 'seq.fasta')
     with open(fasta, 'w') as fout:
         for item in items:

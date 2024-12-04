@@ -79,7 +79,8 @@ def main(args):
             if not aligned:
                 ca_aligned, rotation, t = kabsch(x[:, 1, :], true_x[:, 1, :])
                 x = np.dot(x - np.mean(x, axis=0), rotation) + t
-            new_cplx = set_cdr(origin_cplx[i], seq, x, cdr='H' + str(model.cdr_type))
+            cdr_list = ["H" + s for s in model.cdr_types]
+            new_cplx = set_cdr(origin_cplx[i], seq, x, cdr_list=cdr_list)
             pdb_path = os.path.join(res_dir, new_cplx.get_id() + f'_{n}.pdb')
             new_cplx.to_pdb(pdb_path)
             new_cplx = AAComplex(

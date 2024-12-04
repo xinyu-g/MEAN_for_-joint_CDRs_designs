@@ -161,6 +161,7 @@ class Trainer:
         # main device
         main_device_id = local_rank if local_rank != -1 else device_ids[0]
         device = torch.device('cpu' if main_device_id == -1 else f'cuda:{main_device_id}')
+        print(device_ids, main_device_id, device)
         self.model.to(device)
         if local_rank != -1:
             print_log(f'Using data parallel, local rank {local_rank}, all {device_ids}')
@@ -207,6 +208,22 @@ class Trainer:
             'scheduler': scheduler,
             'frequency': 'epoch' # or batch
         }
+    
+    # def train_step(self, batch, batch_idx):
+    #     X, S, L, offsets = batch['X'], batch['S'], batch['L'], batch['offsets']
+    #     loss, r_snll, closs = self.model(X, S, L, offsets)  # Pass the new dimensions to the model
+    #     # Add logging if needed
+    #     self.log("train_loss", loss, batch_idx)
+    #     return loss
+
+    # # validation step, now handling new input structure
+    # def valid_step(self, batch, batch_idx):
+    #     X, S, L, offsets = batch['X'], batch['S'], batch['L'], batch['offsets']
+    #     with torch.no_grad():
+    #         loss, r_snll, closs = self.model(X, S, L, offsets)  # Use updated model structure
+    #     # Log validation loss if needed
+    #     self.log("valid_loss", loss, batch_idx, val=True)
+    #     return loss
 
     # train step, note that batch should be dict/list/tuple or other objects with .to(device) attribute
     def train_step(self, batch, batch_idx):

@@ -10,6 +10,8 @@ from data import VOCAB
 
 from .mc_egnn import MCAttEGNN
 
+import numpy as np
+
 
 def sequential_and(*tensors):
     res = tensors[0]
@@ -331,31 +333,46 @@ class MCAttModel(nn.Module):
         ppl = [p / n for p, n in zip(ppl, lens)]
         ppl = torch.exp(torch.tensor(ppl, device=device)).tolist()
         return ppl, seq, x, true_x, True
-
+    
 
 class EfficientMCAttModel(MCAttModel):
-    def __init__(self, embed_size, hidden_size, n_channel, n_edge_feats=0, n_layers=3, cdr_type='3', alpha=0.1, dropout=0.1, n_iter=5):
+    def __init__(self, embed_size, hidden_size, n_channel, n_edge_feats=0, n_layers=3, cdr_type=['3'], alpha=0.1, dropout=0.1, n_iter=5):
         super().__init__(embed_size, hidden_size, n_channel, n_edge_feats, n_layers, cdr_type, alpha, dropout, dense=False)
         self.n_iter = n_iter
+        self.cdr_types = cdr_type  # Store multiple cdr_types
 
     def forward(self, X, S, L, offsets):
         '''
         :param X: [n_all_node, n_channel, 3]
         :param S: [n_all_node]
-        :param L: list of cdr types
+        :param L: list of CDR sequences
         :param offsets: [batch_size + 1]
         '''
-        # prepare inputs
-        cdr_range = torch.tensor(
-            [(cdr.index(self.cdr_type), cdr.rindex(self.cdr_type)) for cdr in L],
-            dtype=torch.long, device=X.device
-        ) + offsets[:-1].unsqueeze(-1)
+
+        # print('cdr range 5:', cdr_ranges)
+
+        # Prepare inputs with support for multiple cdr_types
+        # cdr_ranges = torch.tensor([
+        #     (cdr.index(cdr_type), cdr.rindex(cdr_type))
+        #     for cdr_type in self.cdr_types
+        #     for cdr in L if cdr_type in cdr
+        # ],dtype=torch.long, device=X.device)
+
+        # offsets_ = [offsets[:-1].unsqueeze(-1) for _ in self.cdr_types]
+        # cdr_ranges += torch.cat(offsets_)
+
+        cdr_ranges = torch.tensor([
+            (cdr.index(cdr_type) + offset, cdr.rindex(cdr_type) + offset)
+            for offset, cdr in zip(offsets[:-1], L)  # Use the same offset for all cdr_types within a sequence
+            for cdr_type in self.cdr_types if cdr_type in cdr
+        ], dtype=torch.long, device=X.device)
+
 
         # save ground truth
         true_X, true_S = X.clone(), S.clone()
 
         # init mask
-        X, S, cmask = self.init_mask(X, S, cdr_range)  # [n_all_node, n_channel, 3]
+        X, S, cmask = self.init_mask(X, S, cdr_ranges)  # [n_all_node, n_channel, 3]
         mask = cmask[:, 0, 0].bool()  # [n_all_node]
         aa_cnt = mask.sum()
 
@@ -391,20 +408,30 @@ class EfficientMCAttModel(MCAttModel):
         '''
         :param X: [n_all_node, n_channel, 3]
         :param S: [n_all_node]
-        :param L: list of cdr types
+        :param L: list of CDR sequences
         :param offsets: [batch_size + 1]
         '''
-        # prepare inputs
-        cdr_range = torch.tensor(
-            [(cdr.index(self.cdr_type), cdr.rindex(self.cdr_type)) for cdr in L],
-            dtype=torch.long, device=X.device
-        ) + offsets[:-1].unsqueeze(-1)
+        # Prepare inputs for multiple cdr_types
+        # cdr_ranges = torch.tensor([
+        #     (cdr.index(cdr_type), cdr.rindex(cdr_type))
+        #     for cdr_type in self.cdr_types
+        #     for cdr in L if cdr_type in cdr
+        # ],dtype=torch.long, device=X.device)
+
+        # offsets_ = [offsets[:-1].unsqueeze(-1) for _ in self.cdr_types]
+        # cdr_ranges += torch.cat(offsets_)
+
+        cdr_ranges = torch.tensor([
+            (cdr.index(cdr_type) + offset, cdr.rindex(cdr_type) + offset)
+            for offset, cdr in zip(offsets[:-1], L)  # Use the same offset for all cdr_types within a sequence
+            for cdr_type in self.cdr_types if cdr_type in cdr
+        ], dtype=torch.long, device=X.device)
 
         # save ground truth
         true_X, true_S = X.clone(), S.clone()
 
         # init mask
-        X, S, cmask = self.init_mask(X, S, cdr_range)
+        X, S, cmask = self.init_mask(X, S, cdr_ranges)
         mask = cmask[:, 0, 0].bool()  # [n_all_node]
         aa_cnt = mask.sum()
 
@@ -425,11 +452,7 @@ class EfficientMCAttModel(MCAttModel):
             seq_prob = torch.softmax(H[mask].masked_fill(smask, float('-inf')), dim=-1)  # [aa_cnt, vocab_size]
             H_0[mask] = seq_prob.mm(aa_embeddings)  # smooth embedding
 
-        # H_0 = self.aa_embedding(S)  # [n_all_node, embed_size]
-        # H, Z = self.gnn(H_0, X, ctx_edges, inter_edges, ctx_edge_feats)
-
         logits = H[mask]  # [aa_cnt, vocab_size]
-
         logits = logits.masked_fill(smask, float('-inf'))  # mask special tokens
 
         if greedy:
@@ -439,54 +462,143 @@ class EfficientMCAttModel(MCAttModel):
             S[mask] = torch.multinomial(prob, num_samples=1).squeeze()
         snll_all = self.seq_loss(logits, S[mask])
 
-        return snll_all, S, X, true_X, cdr_range
-
+        return snll_all, S, X, true_X, cdr_ranges
+    
     def infer(self, batch, device, greedy=True):
         X, S, L, offsets = batch['X'].to(device), batch['S'].to(device), batch['L'], batch['offsets'].to(device)
-        snll_all, pred_S, pred_X, true_X, cdr_range = self.generate(
+        snll_all, pred_S, pred_X, true_X, cdr_range_tensor = self.generate(
             X, S, L, offsets, greedy=greedy
         )
-        pred_S, cdr_range = pred_S.tolist(), cdr_range.tolist()
+        pred_S, cdr_range_tensor = pred_S.tolist(), cdr_range_tensor.tolist()
         pred_X, true_X = pred_X.cpu().numpy(), true_X.cpu().numpy()
-        # seqs, x, true_x
-        seq, x, true_x = [], [], []
-        for start, end in cdr_range:
-            end = end + 1
-            seq.append(''.join([VOCAB.idx_to_symbol(pred_S[i]) for i in range(start, end)]))
-            x.append(pred_X[start:end])
-            true_x.append(true_X[start:end])
-        # ppl
-        ppl = [0 for _ in range(len(cdr_range))]
+
+        seq = []
+        x = []
+        true_x = []
+        num_cdr_types = len(self.cdr_types)
+
+        # Compute grouped seq, x, and true_x
+        for i in range(0, len(cdr_range_tensor), num_cdr_types):
+            combined_seq = []
+            combined_pred_x = []
+            combined_true_x = []
+
+            for j in range(num_cdr_types):
+                start, end = cdr_range_tensor[i + j]
+                end = end + 1
+                combined_seq.extend([VOCAB.idx_to_symbol(pred_S[k]) for k in range(start, end)])
+                combined_pred_x.extend(pred_X[start:end])
+                combined_true_x.extend(true_X[start:end])
+
+            seq.append(''.join(combined_seq))  # Combine seq for the current group
+            x.append(np.array(combined_pred_x))  # Combine pred_x as a NumPy array
+            true_x.append(np.array(combined_true_x))  # Combine true_x as a NumPy array
+
+        # Compute PPL scores grouped by num_cdr_types
+        ppl = [0 for _ in range(len(cdr_range_tensor) // num_cdr_types)]
         lens = [0 for _ in ppl]
         offset = 0
-        for i, (start, end) in enumerate(cdr_range):
-            length = end - start + 1
-            for t in range(length):
-                ppl[i] += snll_all[t + offset]
-            offset += length
-            lens[i] = length
-        ppl = [p / n for p, n in zip(ppl, lens)]
-        ppl = torch.exp(torch.tensor(ppl, device=device)).tolist()
-        return ppl, seq, x, true_x, True
 
+        for i in range(0, len(cdr_range_tensor), num_cdr_types):
+            total_length = 0
+            total_snll = 0
+
+            for j in range(num_cdr_types):
+                start, end = cdr_range_tensor[i + j]
+                length = end - start + 1
+                total_length += length
+                for t in range(length):
+                    total_snll += snll_all[t + offset]
+                offset += length
+
+            # Store the combined PPL score and total length for the grouped ranges
+            ppl[i // num_cdr_types] = total_snll / total_length
+            lens[i // num_cdr_types] = total_length
+
+        # Compute the final PPL by taking the exponential
+        ppl = torch.exp(torch.tensor(ppl, device=device)).tolist()
+
+        return ppl, seq, x, true_x, True
+    # def infer(self, batch, device, greedy=True):
+    #     X, S, L, offsets = batch['X'].to(device), batch['S'].to(device), batch['L'], batch['offsets'].to(device)
+    #     snll_all, pred_S, pred_X, true_X, cdr_range_tensor = self.generate(
+    #         X, S, L, offsets, greedy=greedy
+    #     )
+    #     pred_S, cdr_range_tensor = pred_S.tolist(), cdr_range_tensor.tolist()
+    #     pred_X, true_X = pred_X.cpu().numpy(), true_X.cpu().numpy()
+        
+    #     seq, x, true_x = [], [], []
+    #     for start, end in cdr_range_tensor:
+    #         end = end + 1
+    #         seq.append(''.join([VOCAB.idx_to_symbol(pred_S[i]) for i in range(start, end)]))
+    #         x.append(pred_X[start:end])
+    #         true_x.append(true_X[start:end])
+    #     num_cdr_types = len(self.cdr_types)
+    #     ppl = [0 for _ in range(len(cdr_range_tensor) // num_cdr_types)]
+    #     lens = [0 for _ in ppl]
+    #     offset = 0
+
+    #     for i in range(0, len(cdr_range_tensor), num_cdr_types):
+    #         total_length = 0
+    #         total_snll = 0
+
+    #         for j in range(num_cdr_types):
+    #             start, end = cdr_range_tensor[i + j]
+    #             length = end - start + 1
+    #             total_length += length
+    #             for t in range(length):
+    #                 total_snll += snll_all[t + offset]
+    #             offset += length
+
+    #         # Store the combined PPL score and total length for the grouped ranges
+    #         ppl[i // num_cdr_types] = total_snll / total_length
+    #         lens[i // num_cdr_types] = total_length
+
+    #     # Compute the final PPL by taking the exponential
+    #     ppl = torch.exp(torch.tensor(ppl, device=device)).tolist()
+    #     # ppl = [0 for _ in range(len(cdr_range_tensor))]
+    #     # lens = [0 for _ in ppl]
+    #     # offset = 0
+    #     # for i, (start, end) in enumerate(cdr_range_tensor):
+    #     #     length = end - start + 1
+    #     #     for t in range(length):
+    #     #         ppl[i] += snll_all[t + offset]
+    #     #     offset += length
+    #     #     lens[i] = length
+    #     # ppl = [p / n for p, n in zip(ppl, lens)]
+    #     # ppl = torch.exp(torch.tensor(ppl, device=device)).tolist()
+    #     # print(f'ppl: {len(ppl)}, seq: {len(seq)}')
+    #     return ppl, seq, x, true_x, True
+
+    
     def generate_analyze(self, X, S, L, offsets, greedy=True):
         '''
         :param X: [n_all_node, n_channel, 3]
         :param S: [n_all_node]
-        :param L: list of cdr types
+        :param L: list of CDR sequences
         :param offsets: [batch_size + 1]
         '''
-        # prepare inputs
-        cdr_range = torch.tensor(
-            [(cdr.index(self.cdr_type), cdr.rindex(self.cdr_type)) for cdr in L],
-            dtype=torch.long, device=X.device
-        ) + offsets[:-1].unsqueeze(-1)
+        # Prepare inputs for multiple cdr_types
+        # cdr_ranges = torch.tensor([
+        #     (cdr.index(cdr_type), cdr.rindex(cdr_type))
+        #     for cdr_type in self.cdr_types
+        #     for cdr in L if cdr_type in cdr
+        # ],dtype=torch.long, device=X.device)
+
+        # offsets_ = [offsets[:-1].unsqueeze(-1) for _ in self.cdr_types]
+        # cdr_ranges += torch.cat(offsets_)
+
+        cdr_ranges = torch.tensor([
+            (cdr.index(cdr_type) + offset, cdr.rindex(cdr_type) + offset)
+            for offset, cdr in zip(offsets[:-1], L)  # Use the same offset for all cdr_types within a sequence
+            for cdr_type in self.cdr_types if cdr_type in cdr
+        ], dtype=torch.long, device=X.device)
 
         # save ground truth
         true_X, true_S = X.clone(), S.clone()
 
         # init mask
-        X, S, cmask = self.init_mask(X, S, cdr_range)
+        X, S, cmask = self.init_mask(X, S, cdr_ranges)
         mask = cmask[:, 0, 0].bool()  # [n_all_node]
         aa_cnt = mask.sum()
 
@@ -502,7 +614,7 @@ class EfficientMCAttModel(MCAttModel):
                 ctx_edges, inter_edges, ctx_edge_feats = self.protein_feature(X, S, offsets)
             H, Z, atts = self.gnn(H_0, X, ctx_edges, inter_edges, ctx_edge_feats, return_attention=True)
 
-            # refine
+            # refine            
             X = X.clone()
             X[mask] = Z[mask]
             H_0 = H_0.clone()
@@ -513,11 +625,7 @@ class EfficientMCAttModel(MCAttModel):
             round_probs.append(masked_logits)
             round_Xs.append(X)
 
-        # H_0 = self.aa_embedding(S)  # [n_all_node, embed_size]
-        # H, Z = self.gnn(H_0, X, ctx_edges, inter_edges, ctx_edge_feats)
-
         logits = H[mask]  # [aa_cnt, vocab_size]
-
         logits = logits.masked_fill(smask, float('-inf'))  # mask special tokens
 
         if greedy:
@@ -530,6 +638,227 @@ class EfficientMCAttModel(MCAttModel):
         return {
             'r_probs': round_probs,
             'r_Xs': round_Xs,
-            'cdr_range': cdr_range,
+            'cdr_range': cdr_ranges,
             'final_atts': atts
         }
+            
+
+
+# class EfficientMCAttModel(MCAttModel):
+    # def __init__(self, embed_size, hidden_size, n_channel, n_edge_feats=0, n_layers=3, cdr_type='3', alpha=0.1, dropout=0.1, n_iter=5):
+    #     super().__init__(embed_size, hidden_size, n_channel, n_edge_feats, n_layers, cdr_type, alpha, dropout, dense=False)
+    #     self.n_iter = n_iter
+
+    # def forward(self, X, S, L, offsets):
+    #     '''
+    #     :param X: [n_all_node, n_channel, 3]
+    #     :param S: [n_all_node]
+    #     :param L: list of cdr types
+    #     :param offsets: [batch_size + 1]
+    #     '''
+    #     # prepare inputs
+    #     cdr_range = []
+    #     for cdr in L:
+    #         # Find all matches for each type in self.cdr_type
+    #         ranges = [(cdr.index(cdr_type), cdr.rindex(cdr_type)) for cdr_type in self.cdr_type if cdr_type in cdr]
+    #         if ranges:
+    #             # Flatten and extend ranges if there are multiple matches per cdr
+    #             cdr_range.extend(ranges)
+
+    #     cdr_range = torch.tensor(cdr_range, dtype=torch.long, device=X.device) + offsets[:-1].unsqueeze(-1)
+    #     # cdr_range = torch.tensor(
+    #     #     [(cdr.index(self.cdr_type), cdr.rindex(self.cdr_type)) for cdr in L],
+    #     #     dtype=torch.long, device=X.device
+    #     # ) + offsets[:-1].unsqueeze(-1)
+
+    #     # save ground truth
+    #     true_X, true_S = X.clone(), S.clone()
+
+    #     # init mask
+    #     X, S, cmask = self.init_mask(X, S, cdr_range)  # [n_all_node, n_channel, 3]
+    #     mask = cmask[:, 0, 0].bool()  # [n_all_node]
+    #     aa_cnt = mask.sum()
+
+    #     special_mask = torch.tensor(VOCAB.get_special_mask(), device=S.device, dtype=torch.long)
+    #     smask = special_mask.repeat(aa_cnt, 1).bool()
+    #     H_0 = self.aa_embedding(S)  # [n_all_node, embed_size]
+    #     aa_embeddings = self.aa_embedding(torch.arange(self.num_aa_type, device=H_0.device))  # [vocab_size, embed_size]
+
+    #     snll, closs = 0, 0
+
+    #     for r in range(self.n_iter):
+    #         with torch.no_grad():
+    #             ctx_edges, inter_edges, ctx_edge_feats = self.protein_feature(X, S, offsets)
+    #         H, Z = self.gnn(H_0, X, ctx_edges, inter_edges, ctx_edge_feats)
+
+    #         # refine
+    #         X = X.clone()
+    #         X[mask] = Z[mask]
+    #         H_0 = H_0.clone()
+    #         logits = H[mask]
+    #         seq_prob = torch.softmax(logits.masked_fill(smask, float('-inf')), dim=-1)  # [aa_cnt, vocab_size]
+    #         H_0[mask] = seq_prob.mm(aa_embeddings)  # smooth embedding
+            
+    #         r_snll = torch.sum(self.seq_loss(logits, true_S[mask])) / aa_cnt
+    #         snll += r_snll / self.n_iter
+        
+    #     closs = self.coord_loss(Z[mask], true_X[mask]) / aa_cnt
+
+    #     loss = snll + self.alpha * closs
+    #     return loss, r_snll, closs  # only return the last snll
+
+    # def generate(self, X, S, L, offsets, greedy=True):
+    #     '''
+    #     :param X: [n_all_node, n_channel, 3]
+    #     :param S: [n_all_node]
+    #     :param L: list of cdr types
+    #     :param offsets: [batch_size + 1]
+    #     '''
+    #     # prepare inputs
+    #     cdr_range = []
+    #     for cdr in L:
+    #         # Find all matches for each type in self.cdr_type
+    #         ranges = [(cdr.index(cdr_type), cdr.rindex(cdr_type)) for cdr_type in self.cdr_type if cdr_type in cdr]
+    #         if ranges:
+    #             # Flatten and extend ranges if there are multiple matches per cdr
+    #             cdr_range.extend(ranges)
+
+    #     cdr_range = torch.tensor(cdr_range, dtype=torch.long, device=X.device) + offsets[:-1].unsqueeze(-1)
+    #     cdr_range = torch.tensor(
+    #         [(cdr.index(self.cdr_type), cdr.rindex(self.cdr_type)) for cdr in L],
+    #         dtype=torch.long, device=X.device
+    #     ) + offsets[:-1].unsqueeze(-1)
+
+    #     # save ground truth
+    #     true_X, true_S = X.clone(), S.clone()
+
+    #     # init mask
+    #     X, S, cmask = self.init_mask(X, S, cdr_range)
+    #     mask = cmask[:, 0, 0].bool()  # [n_all_node]
+    #     aa_cnt = mask.sum()
+
+    #     special_mask = torch.tensor(VOCAB.get_special_mask(), device=S.device, dtype=torch.long)
+    #     smask = special_mask.repeat(aa_cnt, 1).bool()
+    #     H_0 = self.aa_embedding(S)  # [n_all_node, embed_size]
+    #     aa_embeddings = self.aa_embedding(torch.arange(self.num_aa_type, device=H_0.device))  # [vocab_size, embed_size]
+        
+    #     for r in range(self.n_iter):
+    #         with torch.no_grad():
+    #             ctx_edges, inter_edges, ctx_edge_feats = self.protein_feature(X, S, offsets)
+    #         H, Z = self.gnn(H_0, X, ctx_edges, inter_edges, ctx_edge_feats)
+
+    #         # refine
+    #         X = X.clone()
+    #         X[mask] = Z[mask]
+    #         H_0 = H_0.clone()
+    #         seq_prob = torch.softmax(H[mask].masked_fill(smask, float('-inf')), dim=-1)  # [aa_cnt, vocab_size]
+    #         H_0[mask] = seq_prob.mm(aa_embeddings)  # smooth embedding
+
+    #     # H_0 = self.aa_embedding(S)  # [n_all_node, embed_size]
+    #     # H, Z = self.gnn(H_0, X, ctx_edges, inter_edges, ctx_edge_feats)
+
+    #     logits = H[mask]  # [aa_cnt, vocab_size]
+
+    #     logits = logits.masked_fill(smask, float('-inf'))  # mask special tokens
+
+    #     if greedy:
+    #         S[mask] = torch.argmax(logits, dim=-1)  # [n]
+    #     else:
+    #         prob = F.softmax(logits, dim=-1)
+    #         S[mask] = torch.multinomial(prob, num_samples=1).squeeze()
+    #     snll_all = self.seq_loss(logits, S[mask])
+
+    #     return snll_all, S, X, true_X, cdr_range
+
+    # def infer(self, batch, device, greedy=True):
+    #     X, S, L, offsets = batch['X'].to(device), batch['S'].to(device), batch['L'], batch['offsets'].to(device)
+    #     snll_all, pred_S, pred_X, true_X, cdr_range = self.generate(
+    #         X, S, L, offsets, greedy=greedy
+    #     )
+    #     pred_S, cdr_range = pred_S.tolist(), cdr_range.tolist()
+    #     pred_X, true_X = pred_X.cpu().numpy(), true_X.cpu().numpy()
+    #     # seqs, x, true_x
+    #     seq, x, true_x = [], [], []
+    #     for start, end in cdr_range:
+    #         end = end + 1
+    #         seq.append(''.join([VOCAB.idx_to_symbol(pred_S[i]) for i in range(start, end)]))
+    #         x.append(pred_X[start:end])
+    #         true_x.append(true_X[start:end])
+    #     # ppl
+    #     ppl = [0 for _ in range(len(cdr_range))]
+    #     lens = [0 for _ in ppl]
+    #     offset = 0
+    #     for i, (start, end) in enumerate(cdr_range):
+    #         length = end - start + 1
+    #         for t in range(length):
+    #             ppl[i] += snll_all[t + offset]
+    #         offset += length
+    #         lens[i] = length
+    #     ppl = [p / n for p, n in zip(ppl, lens)]
+    #     ppl = torch.exp(torch.tensor(ppl, device=device)).tolist()
+    #     return ppl, seq, x, true_x, True
+
+    # def generate_analyze(self, X, S, L, offsets, greedy=True):
+    #     '''
+    #     :param X: [n_all_node, n_channel, 3]
+    #     :param S: [n_all_node]
+    #     :param L: list of cdr types
+    #     :param offsets: [batch_size + 1]
+    #     '''
+    #     # prepare inputs
+    #     cdr_range = torch.tensor(
+    #         [(cdr.index(self.cdr_type), cdr.rindex(self.cdr_type)) for cdr in L],
+    #         dtype=torch.long, device=X.device
+    #     ) + offsets[:-1].unsqueeze(-1)
+
+    #     # save ground truth
+    #     true_X, true_S = X.clone(), S.clone()
+
+    #     # init mask
+    #     X, S, cmask = self.init_mask(X, S, cdr_range)
+    #     mask = cmask[:, 0, 0].bool()  # [n_all_node]
+    #     aa_cnt = mask.sum()
+
+    #     special_mask = torch.tensor(VOCAB.get_special_mask(), device=S.device, dtype=torch.long)
+    #     smask = special_mask.repeat(aa_cnt, 1).bool()
+    #     H_0 = self.aa_embedding(S)  # [n_all_node, embed_size]
+    #     aa_embeddings = self.aa_embedding(torch.arange(self.num_aa_type, device=H_0.device))  # [vocab_size, embed_size]
+        
+    #     round_probs, round_Xs = [], []
+
+    #     for r in range(self.n_iter):
+    #         with torch.no_grad():
+    #             ctx_edges, inter_edges, ctx_edge_feats = self.protein_feature(X, S, offsets)
+    #         H, Z, atts = self.gnn(H_0, X, ctx_edges, inter_edges, ctx_edge_feats, return_attention=True)
+
+    #         # refine
+    #         X = X.clone()
+    #         X[mask] = Z[mask]
+    #         H_0 = H_0.clone()
+    #         masked_logits = H[mask].masked_fill(smask, float('-inf'))
+    #         seq_prob = torch.softmax(masked_logits, dim=-1)  # [aa_cnt, vocab_size]
+    #         H_0[mask] = seq_prob.mm(aa_embeddings)  # smooth embedding
+
+    #         round_probs.append(masked_logits)
+    #         round_Xs.append(X)
+
+    #     # H_0 = self.aa_embedding(S)  # [n_all_node, embed_size]
+    #     # H, Z = self.gnn(H_0, X, ctx_edges, inter_edges, ctx_edge_feats)
+
+    #     logits = H[mask]  # [aa_cnt, vocab_size]
+
+    #     logits = logits.masked_fill(smask, float('-inf'))  # mask special tokens
+
+    #     if greedy:
+    #         S[mask] = torch.argmax(logits, dim=-1)  # [n]
+    #     else:
+    #         prob = F.softmax(logits, dim=-1)
+    #         S[mask] = torch.multinomial(prob, num_samples=1).squeeze()  # [n]
+    #     snll_all = self.seq_loss(logits, S[mask])
+
+    #     return {
+    #         'r_probs': round_probs,
+    #         'r_Xs': round_Xs,
+    #         'cdr_range': cdr_range,
+    #         'final_atts': atts
+    #     }

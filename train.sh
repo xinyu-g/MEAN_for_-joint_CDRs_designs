@@ -1,9 +1,18 @@
 #!/bin/bash
 
 ########## adjust configs according to your needs ##########
-TRAIN_SET=${DATA_DIR}/train.json
-DEV_SET=${DATA_DIR}/valid.json
-SAVE_DIR=${DATA_DIR}/ckpt
+if [ -z "${INPUT_DIR}" ]; then
+    INPUT_DIR=${DATA_DIR}  # Fallback to DATA_DIR if INPUT_DIR not set
+fi
+if [ -z "${OUTPUT_DIR}" ]; then
+    OUTPUT_DIR=${DATA_DIR}  # Fallback to DATA_DIR if OUTPUT_DIR not set
+fi
+
+TRAIN_SET=${INPUT_DIR}/train.json
+DEV_SET=${INPUT_DIR}/valid.json
+SAVE_DIR=${OUTPUT_DIR}/ckpt
+mkdir -p ${SAVE_DIR}  # Create the output directory
+
 BATCH_SIZE=16  # need four 12G GPU
 MAX_EPOCH=20
 if [ -z ${LR} ]; then
@@ -38,10 +47,16 @@ if [ -z "$GPU" ]; then
 fi
 export CUDA_VISIBLE_DEVICES=$GPU
 echo "Using GPUs: $GPU"
+if [ "$GPU" = "-1" ]; then
+    export CUDA_VISIBLE_DEVICES=""  # Disable CUDA for CPU-only
+else
+    export CUDA_VISIBLE_DEVICES=$GPU  # Set specified GPUs
+fi
 GPU_ARR=(`echo $GPU | tr ',' ' '`)
+echo "GPU_ARR: ${GPU_ARR[@]}"
 
 if [ ${#GPU_ARR[@]} -gt 1 ]; then
-	PREFIX="python -m torch.distributed.launch --nproc_per_node=${#GPU_ARR[@]} --master_addr=${MASTER_ADDR} --master_port=${MASTER_PORT}"
+	PREFIX="torchrun --nproc_per_node=${#GPU_ARR[@]} --master_addr=${MASTER_ADDR} --master_port=${MASTER_PORT}"
 else
     PREFIX="python"
 fi
@@ -55,12 +70,28 @@ if [ $1 ]; then
 	MODEL=$1
 fi
 
-CDR=3
-if [ $2 ]; then
-    CDR=$2
+# CDR="[1, 2, 3]"  # Default CDR types as a list
+# if [ $2 ]; then
+#     CDR=[$(echo $2 | tr ' ' ',')]
+# fi
+
+ # Default CDR types
+# if [ "$2" ]; then
+#     CDR="$2"
+# fi
+
+if [ -z ${CDR} ]; then
+	CDR="1 2 3" 
 fi
 
-SAVE_DIR=${SAVE_DIR}/${MODEL}_CDR${CDR}_${MODE}
+# Create the model-specific directory under the output directory
+SAVE_DIR=${SAVE_DIR}/${MODEL}_CDR${CDR//[ ,]/}_${MODE}
+mkdir -p ${SAVE_DIR}  # Create the model-specific directory
+
+echo "GPU_ARR: ${GPU_ARR[@]}"
+echo "CDR: ${CDR}"
+echo "Input from: ${INPUT_DIR}"
+echo "Saving to: ${SAVE_DIR}"
 
 ${PREFIX} train.py \
     --train_set $TRAIN_SET \
@@ -68,10 +99,11 @@ ${PREFIX} train.py \
     --save_dir $SAVE_DIR \
     --batch_size ${BATCH_SIZE} \
     --max_epoch ${MAX_EPOCH} \
-    --gpu "${!GPU_ARR[@]}" \
+    --gpus ${GPU_ARR[@]} \
     --mode ${MODE} \
-    --cdr_type ${CDR} \
+    --cdr_type "${CDR}" \
     --lr ${LR} \
     --alpha 0.8 \
     --anneal_base 0.95 \
-	--n_iter 3
+    --n_iter 3
+

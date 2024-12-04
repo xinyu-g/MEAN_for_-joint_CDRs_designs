@@ -3,3 +3,6 @@ __pycache__
 __tmcache__
 TMscore
 TMscore.exe
+results
+summaries
+.gitignore

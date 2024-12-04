@@ -17,6 +17,9 @@ fi
 if [ -z ${RUN} ]; then
     RUN=5
 fi
+if [ -z ${INPUT_DIR} ]; then
+    DATA_DIR=/data/private/kxz/antibody/data/SAbDab
+fi
 
 echo "Using GPU: ${GPU}"
 
@@ -37,8 +40,8 @@ echo "Using checkpoint: ${CKPT}"
 
 python generate.py \
     --ckpt ${CKPT} \
-    --test_set ${DATA_DIR}/test.json \
+    --test_set ${INPUT_DIR}/test.json \
     --out ${CKPT_DIR}/results \
-    --gpu 0 \
+    --gpu -1 \
     --run ${RUN} \
     --mode ${MODE} | tee -a ${CKPT_DIR}/eval_log.txt

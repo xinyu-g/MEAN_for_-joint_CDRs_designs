@@ -9,7 +9,7 @@ if [ -z ${MODEL} ]; then
     MODEL=mean
 fi
 if [ -z ${CDR} ]; then
-    CDR=3
+    CDR=123
 fi
 
 echo "Using GPU: ${GPU}"
@@ -34,7 +34,7 @@ python generate.py \
     --ckpt ${CKPT} \
     --test_set ${DATA_DIR}/test.json \
     --out ${CKPT_DIR}/results \
-    --gpu 0 \
+    --gpu -1 \
     --rabd_test \
     --rabd_sample 1 \
     --topk 100 \

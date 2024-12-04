@@ -151,7 +151,12 @@ def main(args):
             with torch.no_grad():
                 batch = dataset.collate_fn(inputs)
                 ppls, seqs, xs, true_xs, aligned = model.infer(batch, device, greedy=False)
-                results.extend([(ppls[i], seqs[i], xs[i], true_xs[i], aligned) for i in range(len(seqs))])
+                # Repeat each PPL score according to the number of CDR types
+                expanded_ppls = [ppls[i // len(model.cdr_types)] for i in range(len(seqs))]
+                # Now we can safely use `seqs` length in the `results.extend` line
+                results.extend([(expanded_ppls[i], seqs[i], xs[i], true_xs[i], aligned) for i in range(len(seqs))])
+                # ppls, seqs, xs, true_xs, aligned = model.infer(batch, device, greedy=False)
+                # results.extend([(ppls[i], seqs[i], xs[i], true_xs[i], aligned) for i in range(len(seqs))])
             recorded, candidate_pool = {}, []
             for n, (ppl, seq, x, true_x, aligned) in enumerate(results):
                 if seq in recorded:
@@ -170,7 +175,8 @@ def main(args):
             sorted_cand_idx = sorted([j for j in range(len(candidate_pool))], key=lambda j: candidate_pool[j][0])
             for j in sorted_cand_idx:
                 ppl, seq, x, n = candidate_pool[j]
-                new_cplx = set_cdr(origin_cplx[i], seq, x, cdr='H' + str(model.cdr_type))
+                cdr_list = ["H" + s for s in model.cdr_types]
+                new_cplx = set_cdr(origin_cplx[i], seq, x, cdr_list=cdr_list) # cdr='H' + str(model.cdr_type)
                 pdb_path = os.path.join(res_dir, new_cplx.get_id() + f'_{n}.pdb')
                 new_cplx.to_pdb(pdb_path)
                 new_cplx = AAComplex(

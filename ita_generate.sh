@@ -18,5 +18,5 @@ python ita_generate.py \
     --ckpt ${CKPT} \
     --test_set ${DATA_DIR}/skempi_all.json \
     --save_dir ${CKPT_DIR}/ita_results \
-    --gpu 0 \
+    --gpu -1 \
     --n_samples 100

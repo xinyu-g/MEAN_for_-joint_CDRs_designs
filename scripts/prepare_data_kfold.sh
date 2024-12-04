@@ -30,7 +30,7 @@ python -m data.download \
     --pre_numbered \
     --n_cpu 4
 
-K=10  # 10-fold
+K=-1  # 10-fold
 # cdrh1/2/3
 for ((i=1;i<=3;i++));
 do
@@ -46,10 +46,14 @@ do
         --cdr ${CDR} \
         --filter 111
     # process
-    for ((k=0;k<${K};k++));
-    do
-        python data/dataset.py --dataset ${PROCESS_DIR}/fold_${k}/test.json
-        python data/dataset.py --dataset ${PROCESS_DIR}/fold_${k}/valid.json
-        python data/dataset.py --dataset ${PROCESS_DIR}/fold_${k}/train.json
-    done
+    python data/dataset.py --dataset ${PROCESS_DIR}/test.json
+    python data/dataset.py --dataset ${PROCESS_DIR}/valid.json
+    python data/dataset.py --dataset ${PROCESS_DIR}/train.json
+    
+    # for ((k=0;k<${K};k++));
+    # do
+    #     python data/dataset.py --dataset ${PROCESS_DIR}/fold_${k}/test.json
+    #     python data/dataset.py --dataset ${PROCESS_DIR}/fold_${k}/valid.json
+    #     python data/dataset.py --dataset ${PROCESS_DIR}/fold_${k}/train.json
+    # done
 done

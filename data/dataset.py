@@ -255,14 +255,20 @@ class EquiAACDataset(torch.utils.data.Dataset):
         }
 
 
+def cmp_function(score1, score2):
+    return score1 - score2
+
 class ITAWrapper(torch.utils.data.Dataset):
-    def __init__(self, dataset, n_samples, _cmp=lambda score1, score2: score1 - score2):
+    def __init__(self, dataset, n_samples, _cmp=cmp_function):
         super().__init__()
         self.dataset = deepcopy(dataset)
-        self.dataset._check_load_part = lambda idx: idx
+        self.dataset._check_load_part = self.check_load_part  # Replace lambda with method reference
         self.candidates = [[(self.dataset.data[i], 0)] for i in self.dataset.idx_mapping]
         self.n_samples = n_samples
         self.cmp = _cmp
+
+    def check_load_part(self, idx):  # New method to replace the lambda
+        return idx
 
     def _cmp_wrapper(self, a, b):  # tuple of (cplx, score)
         return self.cmp(a[1], b[1])

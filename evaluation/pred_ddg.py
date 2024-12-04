@@ -17,10 +17,10 @@ from .ddg.utils.misc import *
 from .ddg.utils.data import *
 from .ddg.utils.protein import *
 
-CKPT = torch.load(os.path.join(MODULE_DIR, 'data', 'model.pt'))
+CKPT = torch.load(os.path.join(MODULE_DIR, 'data', 'model.pt'), map_location='cpu', weights_only=False)
 MODEL = DDGPredictor(CKPT['config'].model)
 MODEL.load_state_dict(CKPT['model'])
-DEVICE = torch.device('cuda:0')
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 MODEL.to(DEVICE)
 MODEL.eval()
 
