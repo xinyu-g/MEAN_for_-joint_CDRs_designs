@@ -1,8 +1,9 @@
 #!/bin/bash
 
+INPUT_DIR="summaries/cdrh3"  # Directory containing CDRH3 data
 MODE="111"
 MODEL="mean"
-DATA_DIR="summaries/cdrh3"  # Directory for CDRH3 data
+PORT="9901"
 
 # Array of all CDR combinations to test
 declare -a CDR_COMBINATIONS=(
@@ -32,44 +33,31 @@ for cdr_combo in "${CDR_COMBINATIONS[@]}"; do
     dir_suffix=$(make_dir_name "${cdr_combo}")
     
     # Create output directory
-    output_dir="${DATA_DIR}/CDR${dir_suffix}"
+    output_dir="${INPUT_DIR}/CDR${dir_suffix}"
     mkdir -p "${output_dir}"
     
-    # Check if checkpoint exists
     
     # Run training
-    echo "Input data from: ${DATA_DIR}"
+    echo "Input data from: ${INPUT_DIR}"
     echo "Output will be in: ${output_dir}"
     if [ -z "${GPU}" ]; then
-        GPU=-1
+        GPU=0
     fi
     echo "Using GPU: ${GPU}"
     
-    # Run training with appropriate parameters
-    GPU=${GPU} MODE=${MODE} DATA_DIR=${output_dir} \
+    # Run training with input directory being the base directory
+    LR=${LR} INPUT_DIR="${INPUT_DIR}" OUTPUT_DIR="${output_dir}" \
+    GPU=${GPU} MODE=${MODE} PORT=${PORT} CDR="${cdr_combo}" \
     bash train.sh ${MODEL} "3"  # Always use CDRH3 as target
+    
+    # Run evaluation
+    echo "Running evaluation"
+    INPUT_DIR="${INPUT_DIR}" OUTPUT_DIR="${output_dir}" \
+    GPU=${GPU} MODE=${MODE} CDR="${cdr_combo//[ ,]/}" \
+    bash rabd_test.sh "0"
     
     echo "Finished CDR combination: ${cdr_combo}"
     echo "--------------------------------------"
 done
 
-echo "All CDR combinations completed!"
-
-# Run evaluation for all combinations
-echo "======================================"
-echo "Running evaluation for all combinations"
-echo "======================================"
-
-for cdr_combo in "${CDR_COMBINATIONS[@]}"; do
-    dir_suffix=$(make_dir_name "${cdr_combo}")
-    output_dir="${DATA_DIR}/CDR${dir_suffix}"
-    
-    echo "Evaluating CDR combination: ${cdr_combo}"
-    GPU=${GPU} MODE=${MODE} DATA_DIR=${output_dir} \
-    bash rabd_test.sh "0"
-    
-    echo "Finished evaluating CDR combination: ${cdr_combo}"
-    echo "--------------------------------------"
-done
-
-echo "All evaluations completed!" 
+echo "All CDR combinations completed!" 

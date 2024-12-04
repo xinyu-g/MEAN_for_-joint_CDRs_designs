@@ -49,8 +49,9 @@ for i in {1..3}; do
         echo "Using GPU: ${GPU}"
         
         # Run evaluation with input directory being the base directory
+        # Pass CDR without spaces for checkpoint directory naming
         INPUT_DIR="${base_dir}" OUTPUT_DIR="${output_dir}" \
-        GPU=${GPU} MODE=${MODE} CDR="${cdr_combo}" \
+        GPU=${GPU} MODE=${MODE} CDR="${cdr_combo//[ ,]/}" \
         bash scripts/k_fold_eval.sh "${output_dir}" "${MODE}" "${MODEL}" "${VERSION}"
         
         echo "Finished evaluating CDR combination: ${cdr_combo} for cdrh${i}"

@@ -1,8 +1,8 @@
 #!/bin/bash
 
+INPUT_DIR="summaries"  # Base directory containing the data
 MODE="111"
 MODEL="mean"
-DATA_DIR="summaries"  # Base directory containing the data
 
 # Array of all CDR combinations to test
 declare -a CDR_COMBINATIONS=(
@@ -32,7 +32,7 @@ for cdr_combo in "${CDR_COMBINATIONS[@]}"; do
     dir_suffix=$(make_dir_name "${cdr_combo}")
     
     # Create output directory
-    output_dir="${DATA_DIR}/CDR${dir_suffix}"
+    output_dir="${INPUT_DIR}/CDR${dir_suffix}"
     mkdir -p "${output_dir}"
     
     # Check if checkpoint exists
@@ -44,27 +44,30 @@ for cdr_combo in "${CDR_COMBINATIONS[@]}"; do
     else
         # Run pretraining
         echo "Running pretraining"
-        echo "Input data from: ${DATA_DIR}"
+        echo "Input data from: ${INPUT_DIR}"
         echo "Output will be in: ${output_dir}"
         if [ -z "${GPU}" ]; then
-            GPU=-1
+            GPU=0
         fi
         echo "Using GPU: ${GPU}"
         
-        # Run pretraining with appropriate parameters
-        GPU=${GPU} MODE=${MODE} DATA_DIR=${output_dir} CDR="${cdr_combo}" \
+        # Run pretraining with input directory being the base directory
+        LR=${LR} INPUT_DIR="${INPUT_DIR}" OUTPUT_DIR="${output_dir}" \
+        GPU=${GPU} MODE=${MODE} CDR="${cdr_combo}" \
         bash train.sh ${MODEL} "3"  # Always use CDRH3 as target
     fi
     
     # Run ITA training
     echo "Running ITA training"
     CKPT_DIR="${output_dir}/ckpt/${MODEL}_CDR${dir_suffix//_/}_${MODE}/version_0" \
-    GPU=${GPU} CDR="${cdr_combo}" \
+    INPUT_DIR="${INPUT_DIR}" OUTPUT_DIR="${output_dir}" \
+    GPU=${GPU} CDR="${cdr_combo//[ ,]/}" \
     bash ita_train.sh
     
     # Run evaluation
     echo "Running evaluation"
-    GPU=${GPU} DATA_DIR=${output_dir} CDR="${cdr_combo}" \
+    INPUT_DIR="${INPUT_DIR}" OUTPUT_DIR="${output_dir}" \
+    GPU=${GPU} MODE=${MODE} CDR="${cdr_combo//[ ,]/}" \
     bash ita_generate.sh "${output_dir}/ckpt/${MODEL}_CDR${dir_suffix//_/}_${MODE}/version_0/ita/iter_final.ckpt"
     
     echo "Finished CDR combination: ${cdr_combo}"
