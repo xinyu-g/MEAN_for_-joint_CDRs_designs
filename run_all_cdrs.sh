@@ -7,9 +7,9 @@ PORT="9901"
 
 # Array of all CDR combinations to test
 declare -a CDR_COMBINATIONS=(
-    "1"
-    "2"
-    "3"
+    # "1"
+    # "2"
+    # "3"
     "1 2"
     "1 3"
     "2 3"
@@ -43,13 +43,13 @@ for i in {1..3}; do
         # Check if checkpoint exists
         
 
-        checkpoint_path="${output_dir}/ckpt/${MODEL}_CDR${dir_suffix//_/}_${MODE}/version_0/checkpoint/epoch15_step2400.ckpt"
+        # checkpoint_path="${output_dir}/ckpt/${MODEL}_CDR${dir_suffix//_/}_${MODE}/version_0/checkpoint/epoch15_step2400.ckpt"
 
-        echo "checkpoint: ${checkpoint_path}"
-        if [ -f "${checkpoint_path}" ]; then
-            echo "Checkpoint exists at ${checkpoint_path}, skipping this combination"
-            continue
-        fi
+        # echo "checkpoint: ${checkpoint_path}"
+        # if [ -f "${checkpoint_path}" ]; then
+        #     echo "Checkpoint exists at ${checkpoint_path}, skipping this combination"
+        #     continue
+        # fi
         
         # Run training
         echo "Input data from: ${base_dir}"

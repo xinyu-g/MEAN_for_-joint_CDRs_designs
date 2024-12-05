@@ -18,7 +18,7 @@ if [ -z ${RUN} ]; then
     RUN=5
 fi
 if [ -z ${INPUT_DIR} ]; then
-    DATA_DIR=/data/private/kxz/antibody/data/SAbDab
+    INPUT_DIR=/data/private/kxz/antibody/data/SAbDab
 fi
 
 echo "Using GPU: ${GPU}"

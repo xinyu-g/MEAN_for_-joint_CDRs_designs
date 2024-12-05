@@ -7,9 +7,9 @@ VERSION="0"
 
 # Array of all CDR combinations to test
 declare -a CDR_COMBINATIONS=(
-    "1"
-    "2"
-    "3"
+    # "1"
+    # "2"
+    # "3"
     "1 2"
     "1 3"
     "2 3"

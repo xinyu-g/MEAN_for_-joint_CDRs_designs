@@ -11,8 +11,8 @@ def parse():
     parser = argparse.ArgumentParser(description='Get K fold evaluation results')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Directory to k fold data')
-    parser.add_argument('--cdr_type', type=int, choices=[1, 2, 3], required=True,
-                        help='Type of cdr of the model')
+    parser.add_argument('--cdr_type', type=str, required=True,
+                        help='Type of cdr of the model, e.g. "1 2 3" or "1"')
     parser.add_argument('--model', type=str, required=True, help='Type of model (model name)')
     parser.add_argument('--mode', type=str, choices=['100', '111'], required=True,
                         help='Input mode, H/L/X, e.g. 111 for input H + L + X')
@@ -38,6 +38,9 @@ def get_res_from_log(log_path):
 
 
 def main(args):
+    # Convert cdr_type string to list of integers
+    cdr_types = [int(x) for x in args.cdr_type.split()]
+    
     dirs = []
     for f in os.listdir(args.data_dir):
         k = re.match(r'fold_(\d+)', f)
@@ -45,7 +48,7 @@ def main(args):
             continue
         dirs.append(os.path.join(args.data_dir, f))
     print(f'Number of fold detected: {len(dirs)}')
-    sub_path = ['ckpt', f'{args.model}_CDR{args.cdr_type}_{args.mode}', f'version_{args.version}', 'eval_log.txt']
+    sub_path = ['ckpt', f'{args.model}_CDR{"".join(map(str, cdr_types))}_{args.mode}', f'version_{args.version}', 'eval_log.txt']
     all_res = defaultdict(list)
     for d in dirs:
         eval_f = d
